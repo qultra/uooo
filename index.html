@@ -550,7 +550,7 @@ document.getElementById('save-s3').addEventListener('click',()=>{
   document.getElementById('s3-form').classList.add('hidden');
 });
 
-// OAuth 콜백 처리 (pending 방식으로 변경됨)
+// OAuth 콜백 처리 (pending 방식과 동일한 토큰 저장 로직)
 async function handleOAuthCallback(code, state){
   const [provider]=state.split(':');
   const verifier=sessionStorage.getItem('code_verifier'); if(!verifier) throw new Error('세션 만료');
@@ -563,7 +563,19 @@ async function handleOAuthCallback(code, state){
     body:new URLSearchParams({client_id:clientId,code,grant_type:'authorization_code',code_verifier:verifier,redirect_uri:REDIRECT_URI})});
   const tokens=await res.json(); sessionStorage.removeItem('code_verifier');
   const clouds=getClouds();
-  clouds.push({provider, username:provider, credentials:{refresh_token:tokens.refresh_token, access_token:tokens.access_token, expiry:Date.now()+tokens.expires_in*1000}});
+  const newCreds = {
+    refresh_token: tokens.refresh_token || undefined,
+    access_token: tokens.access_token,
+    expiry: Date.now() + tokens.expires_in * 1000
+  };
+  // refresh_token이 없으면 기존 같은 provider의 refresh_token 유지
+  if (!newCreds.refresh_token) {
+    const existing = clouds.find(c => c.provider === provider);
+    if (existing && existing.credentials.refresh_token) {
+      newCreds.refresh_token = existing.credentials.refresh_token;
+    }
+  }
+  clouds.push({provider, username:provider, credentials: newCreds});
   selectedCloudIndex=clouds.length-1; saveClouds(); initCloudUI();
 }
 
@@ -571,6 +583,7 @@ async function getAccessToken(idx){
   const cloud=getClouds()[idx]; if(!cloud) throw new Error('클라우드 없음');
   if(cloud.provider==='webdav'||cloud.provider==='s3') return null;
   if(cloud.credentials.access_token && cloud.credentials.expiry && Date.now()<cloud.credentials.expiry) return cloud.credentials.access_token;
+  if(!cloud.credentials.refresh_token) throw new Error(`${cloud.provider}에 refresh_token이 없습니다. 다시 연결해 주세요.`);
   let tokenEndpoint, clientId;
   if(cloud.provider==='google'){ tokenEndpoint='https://oauth2.googleapis.com/token'; clientId=GOOGLE_CLIENT_ID; }
   else if(cloud.provider==='dropbox'){ tokenEndpoint='https://api.dropboxapi.com/oauth2/token'; clientId=DROPBOX_CLIENT_ID; }
@@ -579,10 +592,15 @@ async function getAccessToken(idx){
   const res=await fetch(tokenEndpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:new URLSearchParams({client_id:clientId,grant_type:'refresh_token',refresh_token:cloud.credentials.refresh_token})});
   const data=await res.json();
-  cloud.credentials.access_token=data.access_token; cloud.credentials.expiry=Date.now()+data.expires_in*1000; saveClouds(); return data.access_token;
+  if(!res.ok) throw new Error(`${cloud.provider} 토큰 갱신 실패: 다시 연결해 주세요.`);
+  cloud.credentials.access_token=data.access_token;
+  cloud.credentials.expiry=Date.now()+data.expires_in*1000;
+  // 구글은 refresh_token을 다시 주지 않으므로 그대로 유지
+  if(data.refresh_token) cloud.credentials.refresh_token=data.refresh_token;
+  saveClouds(); return data.access_token;
 }
 
-// 업로드/목록/다운로드
+// 업로드/목록/다운로드 (모든 응답 체크 강화)
 async function uploadToCloud(idx, vaultBuf){
   const cloud=getClouds()[idx];
   if(cloud.provider==='google'){
@@ -624,28 +642,35 @@ async function listCloudBackups(idx){
   if(cloud.provider==='google'){
     const token=await getAccessToken(idx);
     const res=await fetch('https://www.googleapis.com/drive/v3/files?q=name contains ".uooo"&spaces=appDataFolder&orderBy=createdTime desc&fields=files(id,name,createdTime)',{headers:{Authorization:`Bearer ${token}`}});
-    const data=await res.json(); return data.files||[];
+    if(!res.ok) return [];
+    return (await res.json()).files||[];
   } else if(cloud.provider==='dropbox'){
     const token=await getAccessToken(idx);
     const res=await fetch('https://api.dropboxapi.com/2/files/list_folder',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({path:''})});
+    if(!res.ok) return [];
     const data=await res.json(); return (data.entries||[]).filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.path_lower,name:f.name,createdTime:f.server_modified}));
   } else if(cloud.provider==='onedrive'){
     const token=await getAccessToken(idx);
     const res=await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot:/children',{headers:{Authorization:`Bearer ${token}`}});
+    if(!res.ok) return [];
     const data=await res.json(); return (data.value||[]).filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.id,name:f.name,createdTime:f.lastModifiedDateTime}));
   } else if(cloud.provider==='box'){
     const token=await getAccessToken(idx);
     const res=await fetch('https://api.box.com/2.0/folders/0/items?fields=id,name,modified_at',{headers:{Authorization:`Bearer ${token}`}});
+    if(!res.ok) return [];
     const data=await res.json(); return data.entries.filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.id,name:f.name,createdTime:f.modified_at}));
   } else if(cloud.provider==='webdav'){
     const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password);
     const res=await fetch(url,{method:'PROPFIND',headers:{'Authorization':'Basic '+auth,'Depth':'1'}});
+    if(!res.ok) return [];
     const text=await res.text(); const parser=new DOMParser(); const xml=parser.parseFromString(text,'text/xml');
     const files=[]; xml.querySelectorAll('response').forEach(r=>{ const href=r.querySelector('href')?.textContent; const name=decodeURIComponent(href.split('/').pop()); const lastmod=r.querySelector('getlastmodified')?.textContent; if(name&&name.endsWith('.uooo')) files.push({id:href,name,createdTime:lastmod}); }); return files;
   } else if(cloud.provider==='s3'){
     const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials;
     const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}?list-type=2&prefix=todo-backup`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3'});
-    const signed=await signer.sign(); const res=await fetch(signed.url, signed); const xml=await res.text();
+    const signed=await signer.sign(); const res=await fetch(signed.url, signed);
+    if(!res.ok) return [];
+    const xml=await res.text();
     const parser=new DOMParser(); const doc=parser.parseFromString(xml,'text/xml'); const files=[];
     doc.querySelectorAll('Contents').forEach(item=>{ const key=item.querySelector('Key').textContent; const lastMod=item.querySelector('LastModified').textContent; files.push({id:key,name:key,createdTime:lastMod}); }); return files;
   }
@@ -653,14 +678,15 @@ async function listCloudBackups(idx){
 
 async function downloadCloudBackup(idx, fileId){
   const cloud=getClouds()[idx];
-  if(cloud.provider==='google'){ const token=await getAccessToken(idx); const res=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
-  else if(cloud.provider==='dropbox'){ const token=await getAccessToken(idx); const res=await fetch('https://content.dropboxapi.com/2/files/download',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Dropbox-API-Arg':JSON.stringify({path:fileId})}}); return new Uint8Array(await res.arrayBuffer()); }
-  else if(cloud.provider==='onedrive'){ const token=await getAccessToken(idx); const res=await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
-  else if(cloud.provider==='box'){ const token=await getAccessToken(idx); const res=await fetch(`https://api.box.com/2.0/files/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
-  else if(cloud.provider==='webdav'){ const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password); const res=await fetch(url+'/'+fileId,{headers:{'Authorization':'Basic '+auth}}); return new Uint8Array(await res.arrayBuffer()); }
-  else if(cloud.provider==='s3'){ const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials; const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}/${fileId}`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3'}); const signed=await signer.sign(); const res=await fetch(signed.url, signed); return new Uint8Array(await res.arrayBuffer()); }
+  if(cloud.provider==='google'){ const token=await getAccessToken(idx); const res=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{headers:{Authorization:`Bearer ${token}`}}); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='dropbox'){ const token=await getAccessToken(idx); const res=await fetch('https://content.dropboxapi.com/2/files/download',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Dropbox-API-Arg':JSON.stringify({path:fileId})}}); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='onedrive'){ const token=await getAccessToken(idx); const res=await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='box'){ const token=await getAccessToken(idx); const res=await fetch(`https://api.box.com/2.0/files/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='webdav'){ const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password); const res=await fetch(url+'/'+fileId,{headers:{'Authorization':'Basic '+auth}}); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='s3'){ const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials; const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}/${fileId}`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3'}); const signed=await signer.sign(); const res=await fetch(signed.url, signed); if(!res.ok) throw new Error('다운로드 실패'); return new Uint8Array(await res.arrayBuffer()); }
 }
 
+// 자동 복원
 async function autoRestoreFromClouds(){
   if(!data.clouds||!data.clouds.length) return;
   for(let i=0;i<data.clouds.length;i++){ try{
@@ -673,9 +699,10 @@ async function autoRestoreFromClouds(){
       localStorage.setItem(`last_backup_${i}`,new Date().toISOString());
       document.getElementById('app-status').textContent=`✅ ${data.clouds[i].provider}에서 복원됨`; break;
     }
-  }catch(e){} }
+  }catch(e){ console.warn(e); } }
 }
 
+// 백업/복원 버튼 이벤트
 document.getElementById('backup-btn').addEventListener('click',async()=>{
   if(selectedCloudIndex<0) return;
   try{ const vault=await dbGet('vault'); await uploadToCloud(selectedCloudIndex,new Uint8Array(vault)); localStorage.setItem(`last_backup_${selectedCloudIndex}`,new Date().toISOString()); document.getElementById('app-status').textContent='백업 완료'; } catch(e){ alert('실패: '+e.message); }
@@ -718,7 +745,7 @@ function showApp(){ document.getElementById('lock-screen').classList.add('hidden
 function lockApp(){ stopAllTimers(); data={topics:[],lastDate:'',clouds:[]}; wrappingKey=null; vaultSalt=null; document.getElementById('app-screen').classList.add('hidden'); document.getElementById('lock-screen').classList.remove('hidden'); pwInput.value=''; document.getElementById('lock-status').textContent=''; }
 async function saveVault(){ checkDailyReset(); const plain=new TextEncoder().encode(JSON.stringify(data)); const vault=await createVault(plain,vaultSalt,wrappingKey); await dbPut('vault',vault.buffer); document.getElementById('app-status').textContent='저장 완료'; updateStats(); }
 
-// 잠금 해제 후 보류 중인 OAuth 연결 처리
+// 잠금 해제 후 보류 중인 OAuth 연결 처리 (refresh_token 보존 포함)
 async function processPendingOAuth() {
   const code = sessionStorage.getItem('pending_code');
   const state = sessionStorage.getItem('pending_state');
@@ -746,15 +773,18 @@ async function processPendingOAuth() {
     sessionStorage.removeItem('code_verifier');
 
     const clouds = getClouds();
-    clouds.push({
-      provider,
-      username: provider,
-      credentials: {
-        refresh_token: tokens.refresh_token,
-        access_token: tokens.access_token,
-        expiry: Date.now() + tokens.expires_in * 1000
+    const newCreds = {
+      refresh_token: tokens.refresh_token || undefined,
+      access_token: tokens.access_token,
+      expiry: Date.now() + tokens.expires_in * 1000
+    };
+    if (!newCreds.refresh_token) {
+      const existing = clouds.find(c => c.provider === provider);
+      if (existing && existing.credentials.refresh_token) {
+        newCreds.refresh_token = existing.credentials.refresh_token;
       }
-    });
+    }
+    clouds.push({ provider, username: provider, credentials: newCreds });
     selectedCloudIndex = clouds.length - 1;
     saveClouds();
     initCloudUI();
