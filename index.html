@@ -466,15 +466,38 @@ document.getElementById('close-stats').addEventListener('click',()=>document.get
 function getClouds(){ return data.clouds||[]; }
 function saveClouds(){ data.clouds=data.clouds||[]; saveVault(); }
 
-function initCloudUI(){
-  const select=document.getElementById('cloud-provider'), summary=document.getElementById('cloud-summary');
-  const clouds=getClouds();
-  while(select.options.length>1) select.remove(1);
-  clouds.forEach((c,i)=>{ const opt=document.createElement('option'); opt.value=i; opt.textContent=`${c.provider} (${c.username||'연결됨'})`; select.appendChild(opt); });
-  if(selectedCloudIndex>=0 && selectedCloudIndex<clouds.length){
-    select.value=selectedCloudIndex; document.getElementById('backup-btn').disabled=false; document.getElementById('restore-btn').disabled=false;
-    summary.textContent=clouds[selectedCloudIndex].provider;
-  } else { document.getElementById('backup-btn').disabled=true; document.getElementById('restore-btn').disabled=true; summary.textContent='연결 없음'; }
+function initCloudUI() {
+  const select = document.getElementById('cloud-provider');
+  const summary = document.getElementById('cloud-summary');
+  const clouds = getClouds();
+
+  // ★ 정적 옵션 개수 (첫 번째 "＋연결추가..." + 6개 서비스 = 7개)
+  const staticOptionCount = 7;
+
+  // 동적으로 추가된 연결 클라우드 옵션만 제거
+  while (select.options.length > staticOptionCount) {
+    select.remove(staticOptionCount);
+  }
+
+  // 연결된 클라우드를 드롭다운 맨 아래에 추가
+  clouds.forEach((c, i) => {
+    const opt = document.createElement('option');
+    opt.value = 'cloud-' + i;          // "cloud-0", "cloud-1" ...
+    opt.textContent = `${c.provider} (${c.username || '연결됨'})`;
+    select.appendChild(opt);
+  });
+
+  // 백업/복원 버튼 활성화
+  if (selectedCloudIndex >= 0 && selectedCloudIndex < clouds.length) {
+    select.value = 'cloud-' + selectedCloudIndex;
+    document.getElementById('backup-btn').disabled = false;
+    document.getElementById('restore-btn').disabled = false;
+    summary.textContent = clouds[selectedCloudIndex].provider;
+  } else {
+    document.getElementById('backup-btn').disabled = true;
+    document.getElementById('restore-btn').disabled = true;
+    summary.textContent = '연결 없음';
+  }
 }
 
 document.getElementById('connect-cloud').addEventListener('click', async ()=>{
@@ -520,7 +543,17 @@ document.getElementById('save-s3').addEventListener('click',()=>{
   document.getElementById('s3-form').classList.add('hidden');
 });
 
-document.getElementById('cloud-provider').addEventListener('change', e=>{ if(e.target.value!==''){ selectedCloudIndex=parseInt(e.target.value,10); initCloudUI(); } });
+document.getElementById('cloud-provider').addEventListener('change', (e) => {
+  const val = e.target.value;
+  if (val.startsWith('cloud-')) {
+    // 연결된 클라우드를 선택한 경우
+    selectedCloudIndex = parseInt(val.split('-')[1], 10);
+  } else {
+    // 일반 서비스(Google Drive 등)를 선택한 경우
+    selectedCloudIndex = -1;   // 백업/복원 비활성화
+  }
+  initCloudUI();   // UI 갱신 (버튼 활성화 여부 등)
+});
 
 // OAuth 콜백 처리
 async function handleOAuthCallback(code, state){
