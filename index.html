@@ -707,20 +707,73 @@ async function tryUnlock(){
       vaultSalt=new Uint8Array(vault).slice(0,16); wrappingKey=await deriveWrapKey(password,kfBytes,vaultSalt);
       const plain=await unlockVault(new Uint8Array(vault)); data=JSON.parse(new TextDecoder().decode(plain)); if(!data.clouds) data.clouds=[];
     }
-    checkDailyReset(); status.textContent=''; showApp(); autoRestoreFromClouds();
+    checkDailyReset(); status.textContent=''; showApp(); autoRestoreFromClouds(); processPendingOAuth();
     if(Notification.permission!=='denied') Notification.requestPermission();
   }catch(e){ status.textContent='인증 실패'; console.error(e); }
 }
 function showApp(){ document.getElementById('lock-screen').classList.add('hidden'); document.getElementById('app-screen').classList.remove('hidden'); renderTopics(); updateStats(); initCloudUI(); }
 function lockApp(){ stopAllTimers(); data={topics:[],lastDate:'',clouds:[]}; wrappingKey=null; vaultSalt=null; document.getElementById('app-screen').classList.add('hidden'); document.getElementById('lock-screen').classList.remove('hidden'); pwInput.value=''; document.getElementById('lock-status').textContent=''; }
 async function saveVault(){ checkDailyReset(); const plain=new TextEncoder().encode(JSON.stringify(data)); const vault=await createVault(plain,vaultSalt,wrappingKey); await dbPut('vault',vault.buffer); document.getElementById('app-status').textContent='저장 완료'; updateStats(); }
+async function processPendingOAuth() {
+  const code = sessionStorage.getItem('pending_code');
+  const state = sessionStorage.getItem('pending_state');
+  if (!code || !state) return;
+
+  sessionStorage.removeItem('pending_code');
+  sessionStorage.removeItem('pending_state');
+
+  try {
+    const [provider] = state.split(':');
+    const verifier = sessionStorage.getItem('code_verifier');
+    if (!verifier) throw new Error('세션 만료');
+    let tokenEndpoint, clientId;
+    if (provider === 'google') { tokenEndpoint = 'https://oauth2.googleapis.com/token'; clientId = GOOGLE_CLIENT_ID; }
+    else if (provider === 'dropbox') { tokenEndpoint = 'https://api.dropboxapi.com/oauth2/token'; clientId = DROPBOX_CLIENT_ID; }
+    else if (provider === 'onedrive') { tokenEndpoint = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'; clientId = ONEDRIVE_CLIENT_ID; }
+    else if (provider === 'box') { tokenEndpoint = 'https://api.box.com/oauth2/token'; clientId = BOX_CLIENT_ID; }
+
+    const res = await fetch(tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: clientId, code, grant_type: 'authorization_code', code_verifier: verifier, redirect_uri: REDIRECT_URI })
+    });
+    const tokens = await res.json();
+    sessionStorage.removeItem('code_verifier');
+
+    const clouds = getClouds();
+    clouds.push({
+      provider,
+      username: provider,
+      credentials: {
+        refresh_token: tokens.refresh_token,
+        access_token: tokens.access_token,
+        expiry: Date.now() + tokens.expires_in * 1000
+      }
+    });
+    selectedCloudIndex = clouds.length - 1;
+    saveClouds();
+    initCloudUI();
+    document.getElementById('app-status').textContent = `${provider} 연결 완료!`;
+  } catch (e) {
+    alert('클라우드 연결 실패: ' + e.message);
+  }
+}
+
 
 // 초기화
-window.addEventListener('load',async()=>{
-  const params=new URLSearchParams(window.location.search); const code=params.get('code'),state=params.get('state');
-  if(code&&state){ window.history.replaceState({},document.title,window.location.pathname); try{await handleOAuthCallback(code,state); alert('클라우드 연결 완료!');}catch(e){alert('로그인 실패: '+e.message);} }
-  document.getElementById('unlock-btn').addEventListener('click',tryUnlock);
-  document.getElementById('lock-btn').addEventListener('click',lockApp);
+window.addEventListener('load', async () => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code'), state = params.get('state');
+
+  if (code && state) {
+    sessionStorage.setItem('pending_code', code);
+    sessionStorage.setItem('pending_state', state);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    alert('인증 성공! 잠금을 해제하면 클라우드가 연결됩니다.');
+  }
+
+  document.getElementById('unlock-btn').addEventListener('click', tryUnlock);
+  document.getElementById('lock-btn').addEventListener('click', lockApp);
 });
 </script>
 </body>
