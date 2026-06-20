@@ -590,11 +590,23 @@ async function getAccessToken(idx){
 // 업로드/목록/다운로드
 async function uploadToCloud(idx, vaultBuf){
   const cloud=getClouds()[idx];
-  if(cloud.provider==='google'){
-    const token=await getAccessToken(idx);
-    const meta={name:`todo-${new Date().toISOString()}.uooo`,parents:['appDataFolder']};
-    const form=new FormData(); form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'})); form.append('file',new Blob([vaultBuf]));
-    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form});
+  // uploadToCloud 함수 내 google 부분
+if (cloud.provider === 'google') {
+  const token = await getAccessToken(idx);
+  const metadata = { name: `todo-${new Date().toISOString()}.uooo`, parents: ['appDataFolder'] };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', new Blob([vaultBuf]));
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Google 업로드 실패 (${res.status}): ${errorText}`);
+  }
+}
   } else if(cloud.provider==='dropbox'){
     const token=await getAccessToken(idx);
     await fetch('https://content.dropboxapi.com/2/files/upload',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Dropbox-API-Arg':JSON.stringify({path:'/todo-backup.uooo',mode:'overwrite'}),'Content-Type':'application/octet-stream'},body:vaultBuf});
