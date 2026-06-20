@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>uooo · 유리 온도계</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- S3 호환 스토리지 서명을 위한 라이브러리 -->
+  <script src="https://cdn.jsdelivr.net/npm/aws4fetch@1.0.17/dist/aws4fetch.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d0d14;
+      --glass: rgba(25, 25, 35, 0.6);
+      --glass-border: rgba(255,255,255,0.08);
+      --text: #e8e8f0;
+      --text-secondary: #9898b0;
+      --text-muted: #6a6a80;
+      --purple-300: #c4b5fd;
+      --purple-400: #a78bfa;
+      --purple-500: #8b5cf6;
+      --purple-600: #7c3aed;
+      --pink: #f9a8d4;
+      --green: #6ee7b7;
+      --green-glow: rgba(110, 231, 183, 0.4);
+      --danger: #f87171;
+      --radius-sm: 12px;
+      --radius-md: 18px;
+      --radius-lg: 24px;
+      --radius-xl: 32px;
+      --shadow-lg: 0 16px 48px rgba(0,0,0,0.6);
+      --transition: 0.25s cubic-bezier(0.4,0,0.2,1);
+    }
+    * { margin:0; padding:0; box-sizing:border-box }
+    body {
+      font-family: 'Pretendard', 'Inter', sans-serif;
+      background: var(--bg);
+      background-image: radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.15) 0%, transparent 60%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app {
+      width: 100%;
+      max-width: 540px;
+      background: var(--glass);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: var(--radius-xl);
+      padding: 32px 24px;
+      box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.1);
+      border: 1px solid var(--glass-border);
+      margin: 10px 0;
+    }
+    .hidden { display:none !important; }
+    h1 { font-weight: 700; font-size: 2rem; }
+    h2 { font-weight: 700; font-size: 1.6rem; }
+    .gradient-text {
+      background: linear-gradient(135deg, var(--purple-300), var(--pink));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .btn {
+      background: rgba(139,92,246,0.2);
+      color: var(--purple-300);
+      border: 1px solid rgba(139,92,246,0.3);
+      border-radius: var(--radius-sm);
+      padding: 12px 24px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all var(--transition);
+      white-space: nowrap;
+    }
+    .btn:hover { background: rgba(139,92,246,0.3); transform: translateY(-1px); }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--purple-500); color: white; border-color: var(--purple-500); }
+    .btn-primary:hover { background: var(--purple-600); }
+    .btn-ghost { background: transparent; border-color: transparent; }
+    .btn-ghost:hover { background: rgba(255,255,255,0.05); }
+    .btn-small { padding: 8px 16px; font-size: 0.8rem; border-radius: 10px; }
+    .btn-circle {
+      width: 36px; height: 36px; border-radius: 50%;
+      padding: 0; font-size: 1.2rem; display: inline-flex;
+      align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.05); color: var(--purple-400);
+      border: 1px solid rgba(255,255,255,0.1); cursor: pointer;
+    }
+    .btn-circle:hover { background: rgba(139,92,246,0.2); }
+    .btn-start { background: var(--green); color: #0a0a14; font-weight: 700; padding: 6px 16px; border-radius: 24px; border: none; cursor: pointer; }
+    .btn-stop { background: var(--danger); color: white; }
+    input, textarea, select {
+      width: 100%; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: var(--radius-sm); padding: 12px 16px; color: var(--text);
+      font-size: 0.95rem; font-family: inherit; transition: all var(--transition); outline: none;
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--purple-400); }
+    label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; display: block; }
+    .card { background: rgba(255,255,255,0.03); border-radius: var(--radius-md); padding: 20px; margin-bottom: 16px; border: 1px solid var(--glass-border); }
+    .thermometer { width: 24px; height: 64px; background: rgba(0,0,0,0.4); border-radius: 12px; position: relative; overflow: hidden; flex-shrink: 0; }
+    .thermometer-fill { position: absolute; bottom: 0; width: 100%; background: linear-gradient(to top, var(--purple-500), var(--purple-300)); border-radius: 12px; transition: height 0.5s; }
+    .stat-card { display: flex; gap: 12px; margin-bottom: 24px; }
+    .stat-item { flex: 1; background: rgba(255,255,255,0.03); border-radius: var(--radius-md); padding: 16px 12px; text-align: center; border: 1px solid var(--glass-border); }
+    .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--purple-300); }
+    .stat-label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+    .modal { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:100; backdrop-filter: blur(8px); }
+    .modal-content { background: var(--glass); border-radius: var(--radius-lg); padding: 28px; width: 90%; max-width: 480px; max-height: 80vh; overflow-y: auto; }
+    .stat-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow:hidden; margin: 6px 0; }
+    .stat-fill { height: 100%; background: linear-gradient(90deg, var(--purple-500), var(--purple-300)); }
+    .badge { background: rgba(139,92,246,0.2); color: var(--purple-300); border-radius: 8px; padding: 2px 10px; font-size: 0.7rem; font-weight: 600; }
+    .badge-deadline { background: rgba(249,168,212,0.15); color: var(--pink); }
+    .status-msg { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 10px; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <!-- 잠금 화면 -->
+  <div id="lock-screen">
+    <div style="text-align:center;margin-bottom:32px;">
+      <h1 class="gradient-text">uooo</h1>
+      <p style="color:var(--text-muted);font-size:0.9rem;margin-top:8px;">꿈을 담는 유리 온도계</p>
+    </div>
+    <label>비밀번호</label>
+    <input type="password" id="password" placeholder="••••••••">
+    <div class="strength-meter" id="strength-meter" style="display:flex;gap:4px;margin:8px 0;">
+      <div class="seg" style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;"></div>
+      <div class="seg" style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;"></div>
+      <div class="seg" style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;"></div>
+      <div class="seg" style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;"></div>
+      <div class="seg" style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;"></div>
+    </div>
+    <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:16px;" id="strength-label"></div>
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+      <input type="checkbox" id="use-keyfile"> 🔑 키 파일로 이중 잠금
+    </label>
+    <div id="keyfile-section" class="hidden" style="margin-top:12px;">
+      <input type="file" id="keyfile-input" accept=".key,.bin" style="margin-top:6px;">
+      <button id="gen-keyfile" class="btn btn-ghost btn-small" style="margin-top:8px;">🛡️ 키파일 생성기</button>
+    </div>
+    <button id="unlock-btn" class="btn btn-primary" style="width:100%;margin-top:20px;">잠금 해제</button>
+    <div class="status-msg" id="lock-status"></div>
+  </div>
+
+  <!-- 메인 앱 -->
+  <div id="app-screen" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2 class="gradient-text">🌸 내 꿈</h2>
+      <div style="display:flex;gap:8px;">
+        <button id="stats-btn" class="btn btn-ghost btn-small">📊 인사이트</button>
+        <button id="lock-btn" class="btn btn-ghost btn-small">🔒</button>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-item"><span class="stat-value" id="stat-overall">0%</span><span class="stat-label">전체 달성률</span></div>
+      <div class="stat-item"><span class="stat-value" id="stat-today">0%</span><span class="stat-label">오늘 목표</span></div>
+      <div class="stat-item"><span class="stat-value" id="stat-time">0h</span><span class="stat-label">투자 시간</span></div>
+    </div>
+    <div id="topics-container"></div>
+    <div style="margin-top:16px;display:flex;gap:8px;">
+      <button id="add-topic-btn" class="btn btn-ghost btn-small">＋ 주제 추가</button>
+    </div>
+    <hr style="margin:20px 0;border-color:var(--glass-border);">
+    <!-- 클라우드 관리 -->
+    <div class="drive-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-weight:600;color:var(--text-secondary);">☁️ 클라우드 동기화</span>
+        <span id="cloud-summary" class="badge"></span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <select id="cloud-provider" style="flex:1;">
+          <option value="">＋ 연결 추가...</option>
+          <option value="google">Google Drive</option>
+          <option value="dropbox">Dropbox</option>
+          <option value="onedrive">OneDrive</option>
+          <option value="box">Box</option>
+          <option value="webdav">WebDAV</option>
+          <option value="s3">S3 호환 (MinIO, B2...)</option>
+        </select>
+        <button id="connect-cloud" class="btn btn-small">연결</button>
+      </div>
+      <div id="webdav-form" class="hidden" style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+        <input type="text" id="webdav-url" placeholder="서버 URL">
+        <input type="text" id="webdav-user" placeholder="사용자 이름">
+        <input type="password" id="webdav-pass" placeholder="비밀번호">
+        <button id="save-webdav" class="btn btn-small">WebDAV 저장</button>
+      </div>
+      <div id="s3-form" class="hidden" style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+        <input type="text" id="s3-endpoint" placeholder="엔드포인트 (예: s3.amazonaws.com)">
+        <input type="text" id="s3-region" placeholder="리전 (예: us-east-1)">
+        <input type="text" id="s3-bucket" placeholder="버킷 이름">
+        <input type="text" id="s3-access-key" placeholder="Access Key">
+        <input type="password" id="s3-secret-key" placeholder="Secret Key">
+        <button id="save-s3" class="btn btn-small">S3 저장</button>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button id="backup-btn" class="btn btn-small" disabled>↗ 백업</button>
+        <button id="restore-btn" class="btn btn-small" disabled>↘ 복원</button>
+      </div>
+    </div>
+    <div class="status-msg" id="app-status"></div>
+  </div>
+</div>
+
+<!-- 통계 모달 -->
+<div id="stats-modal" class="modal hidden">
+  <div class="modal-content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h3 class="gradient-text">📊 능률 지도</h3>
+      <button class="btn btn-ghost btn-small" id="close-stats">닫기</button>
+    </div>
+    <div id="stats-body"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════ 설정 ═══════════
+const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+const DROPBOX_CLIENT_ID = 'YOUR_DROPBOX_APP_KEY';
+const ONEDRIVE_CLIENT_ID = 'YOUR_ONEDRIVE_CLIENT_ID';
+const BOX_CLIENT_ID = 'YOUR_BOX_CLIENT_ID';
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+const DB_NAME = 'uooo-dream-db';
+const STORE = 'vault';
+const PBKDF2_ITER = 600_000;
+
+let wrappingKey = null;
+let vaultSalt = null;
+let data = { topics: [], lastDate: '', clouds: [] };
+let activeTimers = {};
+let selectedCloudIndex = -1;
+
+// 유틸
+function randomBytes(n) { return crypto.getRandomValues(new Uint8Array(n)); }
+function base64url(b) { return btoa(Array.from(new Uint8Array(b)).map(c=>String.fromCharCode(c)).join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function getGoalKey(ti,si,gi) { return `${ti}-${si}-${gi}`; }
+
+// 비밀번호 강도
+const pwInput = document.getElementById('password');
+const segs = document.querySelectorAll('#strength-meter .seg');
+const strLabel = document.getElementById('strength-label');
+pwInput.addEventListener('input', () => {
+  const pw = pwInput.value;
+  let s=0;
+  if(pw.length>=8)s++; if(pw.length>=12)s++; if(/[A-Z]/.test(pw)&&/[a-z]/.test(pw))s++; if(/\d/.test(pw))s++; if(/[^A-Za-z0-9]/.test(pw))s++;
+  segs.forEach((seg,i)=> {
+    seg.style.background = i<s ? '#8b5cf6' : 'rgba(255,255,255,0.1)';
+    if(i<s) seg.style.boxShadow = '0 0 6px rgba(139,92,246,0.5)';
+    else seg.style.boxShadow = 'none';
+  });
+  strLabel.textContent = ['매우 약함','약함','보통','강력함','매우 강력함'][Math.min(s,4)]||'';
+});
+
+// 키파일
+document.getElementById('use-keyfile').addEventListener('change', e => {
+  document.getElementById('keyfile-section').classList.toggle('hidden',!e.target.checked);
+});
+document.getElementById('gen-keyfile').addEventListener('click',()=>{
+  const b=randomBytes(512); const blob=new Blob([b]); const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='uooo.key'; a.click(); alert('512바이트 랜덤 키파일이 생성되었습니다.');
+});
+
+// IndexedDB
+function openDB() { return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=e=>{ if(!e.target.result.objectStoreNames.contains(STORE)) e.target.result.createObjectStore(STORE); }; r.onsuccess=()=>res(r.result); r.onerror=rej; }) }
+async function dbGet(k){const db=await openDB();return new Promise(r=>{const tx=db.transaction(STORE,'readonly');tx.objectStore(STORE).get(k).onsuccess=e=>r(e.target.result)})}
+async function dbPut(k,v){const db=await openDB();return new Promise(r=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(v,k);tx.oncomplete=r})}
+
+// 암호화
+async function deriveWrapKey(password, keyFileBytes, salt) {
+  const enc = new TextEncoder();
+  const passKey = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']);
+  const passBits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' }, passKey, 256);
+  let ikm = new Uint8Array(passBits);
+  if (keyFileBytes) {
+    const hmacKey = await crypto.subtle.importKey('raw', passBits, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', hmacKey, keyFileBytes);
+    const combined = new Uint8Array(ikm.length + sig.byteLength);
+    combined.set(ikm);
+    combined.set(new Uint8Array(sig), ikm.length);
+    ikm = combined;
+  }
+  const hkdfKey = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('uooo-wrap-v1') }, hkdfKey, { name: 'AES-KW', length: 256 }, false, ['wrapKey', 'unwrapKey']);
+}
+async function createVault(plaintext, salt, wrappingKey) {
+  const iv = randomBytes(12);
+  const fek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  const wrapped = await crypto.subtle.wrapKey('raw', fek, wrappingKey, { name: 'AES-KW' });
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, fek, plaintext);
+  const wb = new Uint8Array(wrapped);
+  const lenBytes = new Uint16Array([wb.length]);
+  const vault = new Uint8Array(16 + 2 + wb.length + iv.length + encrypted.byteLength);
+  vault.set(salt,0); vault.set(new Uint8Array(lenBytes.buffer),16); vault.set(wb,18); vault.set(iv,18+wb.length); vault.set(new Uint8Array(encrypted),18+wb.length+iv.length);
+  return vault;
+}
+async function unlockVault(vaultBytes) {
+  const salt = vaultBytes.slice(0,16); const wrappedLen = new DataView(vaultBytes.buffer).getUint16(16,true);
+  const wrappedFek = vaultBytes.slice(18,18+wrappedLen); const iv = vaultBytes.slice(18+wrappedLen,18+wrappedLen+12); const ciphertext = vaultBytes.slice(18+wrappedLen+12);
+  const fek = await crypto.subtle.unwrapKey('raw', wrappedFek, wrappingKey, { name:'AES-KW' }, { name:'AES-GCM', length:256 }, true, ['encrypt','decrypt']);
+  return new Uint8Array(await crypto.subtle.decrypt({ name:'AES-GCM', iv }, fek, ciphertext));
+}
+
+// 일일 초기화 및 통계
+function checkDailyReset() {
+  const today = new Date().toISOString().slice(0,10);
+  if(data.lastDate !== today){
+    data.topics.forEach(t=>t.sections.forEach(s=>s.goals.forEach(g=>{ g.todayProgress=0; g.todayFocusSeconds=0; g.timerRunning=false; g.timerStart=null; g.timeEntries=g.timeEntries||[]; })));
+    data.lastDate=today;
+  }
+}
+function updateStats() {
+  let totalGoals=0, completedGoals=0, todayProgress=0, todayTarget=0, totalSeconds=0;
+  data.topics.forEach(t=>t.sections.forEach(s=>s.goals.forEach(g=>{
+    totalGoals++;
+    if(g.currentCount>=g.targetCount) completedGoals++;
+    todayProgress+=g.todayProgress||0;
+    todayTarget+=g.dailyTarget||0;
+    if(g.timeEntries) totalSeconds+=g.timeEntries.reduce((s,e)=>s+(e.duration||0),0);
+    if(g.timerRunning&&g.timerStart) totalSeconds+=Math.floor((Date.now()-g.timerStart)/1000);
+  })));
+  const overallRate=totalGoals?Math.round(completedGoals/totalGoals*100):0;
+  const todayRate=todayTarget?Math.round(todayProgress/todayTarget*100):0;
+  const totalMinutes=Math.floor(totalSeconds/60);
+  document.getElementById('stat-overall').textContent=overallRate+'%';
+  document.getElementById('stat-today').textContent=todayRate+'%';
+  document.getElementById('stat-time').textContent=Math.floor(totalMinutes/60)+'h '+totalMinutes%60+'m';
+}
+
+// 타이머
+function stopAllTimers() { Object.values(activeTimers).forEach(clearInterval); activeTimers={}; data.topics.forEach(t=>t.sections.forEach(s=>s.goals.forEach(g=>{g.timerRunning=false;g.timerStart=null;}))); }
+function updateTimerDisplay(key, elapsed) { const d=document.getElementById(`timer-${key}`); if(d){ const m=Math.floor(elapsed/60),s=elapsed%60; d.textContent=`${m}:${s.toString().padStart(2,'0')}`; } }
+function startGoalTimer(ti,si,gi) {
+  const g=data.topics[ti].sections[si].goals[gi]; if(g.timerRunning) return;
+  stopAllTimers(); g.timerRunning=true; g.timerStart=Date.now(); g.timeEntries=g.timeEntries||[];
+  const key=getGoalKey(ti,si,gi);
+  activeTimers[key]=setInterval(()=>updateTimerDisplay(key,Math.floor((Date.now()-g.timerStart)/1000)),200);
+  saveVault(); renderTopics();
+}
+function stopGoalTimer(ti,si,gi) {
+  const g=data.topics[ti].sections[si].goals[gi]; if(!g.timerRunning) return;
+  const elapsed=Math.floor((Date.now()-g.timerStart)/1000);
+  g.timerRunning=false; g.timerStart=null;
+  g.timeEntries.push({start:new Date(Date.now()-elapsed*1000).toISOString(), end:new Date().toISOString(), duration:elapsed});
+  g.todayFocusSeconds=(g.todayFocusSeconds||0)+elapsed;
+  const key=getGoalKey(ti,si,gi); if(activeTimers[key]){clearInterval(activeTimers[key]); delete activeTimers[key];}
+  saveVault(); renderTopics();
+}
+
+// UI 렌더링
+function renderTopics() {
+  const container = document.getElementById('topics-container');
+  container.innerHTML = data.topics.map((topic,ti)=>`
+    <div class="card">
+      <div class="topic-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-weight:700;font-size:1rem;">📌 ${esc(topic.name)}</span>
+        <div>
+          <button class="btn-circle" data-action="add-section" data-ti="${ti}">＋</button>
+          <button class="btn-circle" data-action="delete-topic" data-ti="${ti}" style="color:#f44747;">✕</button>
+        </div>
+      </div>
+      ${topic.sections.map((sec,si)=>`
+        <div class="section-row" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--glass-border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;color:var(--purple-400);">🗂️ ${esc(sec.name)}</span>
+            <button class="btn-circle" data-action="add-goal" data-ti="${ti}" data-si="${si}">＋</button>
+          </div>
+          ${sec.goals.map((goal,gi)=>{
+            const key=getGoalKey(ti,si,gi);
+            const pct=Math.min(100,(goal.currentCount/goal.targetCount)*100);
+            return `
+            <div class="goal-item" style="display:flex;align-items:center;gap:12px;margin:10px 0;flex-wrap:wrap;background:rgba(0,0,0,0.2);border-radius:14px;padding:10px;">
+              <div class="thermometer">
+                <div class="thermometer-fill" style="height:${pct}%"></div>
+              </div>
+              <div class="goal-info" style="flex:1;min-width:140px;">
+                <div class="goal-name" style="font-weight:600;font-size:0.9rem;">
+                  ${esc(goal.name)}
+                  <span class="badge">${goal.stage}단계</span>
+                  ${goal.deadline ? `<span class="badge badge-deadline">📅 ${new Date(goal.deadline).toLocaleDateString()}</span>` : ''}
+                  ${goal.timerRunning ? `<span class="timer-display" id="timer-${key}" style="font-variant-numeric:tabular-nums;font-weight:600;color:var(--green);">⏳</span>` : ''}
+                </div>
+                <div class="progress-text" style="font-size:0.7rem;color:var(--text-secondary);">
+                  ${goal.currentCount}/${goal.targetCount} (${Math.round(pct)}%)
+                  <span class="badge">⏱️ 예상 ${goal.estimatedMinutes||0}분</span>
+                  <span class="badge">📊 집중 ${Math.floor((goal.todayFocusSeconds||0)/60)}분</span>
+                </div>
+                <div class="counter-row" style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                  <button class="btn-circle btn-small" data-action="dec-goal" data-ti="${ti}" data-si="${si}" data-gi="${gi}">−</button>
+                  <span style="font-weight:600;">${goal.currentCount}</span>
+                  <button class="btn-circle btn-small" data-action="inc-goal" data-ti="${ti}" data-si="${si}" data-gi="${gi}">＋</button>
+                  <span style="font-size:0.7rem;color:var(--pink);">오늘 +${goal.todayProgress}/${goal.dailyTarget||'-'}</span>
+                  ${goal.timerRunning
+                    ? `<button class="btn-start btn-stop" data-action="stop-timer" data-ti="${ti}" data-si="${si}" data-gi="${gi}">⏹ 중지</button>`
+                    : `<button class="btn-start" data-action="start-timer" data-ti="${ti}" data-si="${si}" data-gi="${gi}">▶ 시작</button>`
+                  }
+                </div>
+              </div>
+              <button class="btn-circle" data-action="delete-goal" data-ti="${ti}" data-si="${si}" data-gi="${gi}" style="color:#f44747;">✕</button>
+            </div>
+          `;}).join('')}
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  container.querySelectorAll('button').forEach(b=>b.addEventListener('click', handleAction));
+}
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function handleAction(e) {
+  const btn=e.currentTarget; const action=btn.dataset.action;
+  const ti=+btn.dataset.ti, si=+btn.dataset.si, gi=+btn.dataset.gi;
+  if(action==='add-section'){ const n=prompt('섹션 이름'); if(n){ data.topics[ti].sections.push({name:n, goals:[]}); saveVault(); renderTopics(); } }
+  else if(action==='delete-topic'){ if(confirm('주제 삭제?')){ stopAllTimers(); data.topics.splice(ti,1); saveVault(); renderTopics(); } }
+  else if(action==='add-goal'){
+    const name=prompt('목표 이름'); if(!name) return;
+    const target=+prompt('목표 개수',100), stage=+prompt('단계 (1~3)',1), daily=+prompt('하루 목표량',5), estimated=+prompt('예상 소요 시간(분)',25);
+    const deadlineStr=prompt('마감일 (YYYY-MM-DD, 없으면 취소)');
+    data.topics[ti].sections[si].goals.push({
+      name, stage:Math.min(3,Math.max(1,stage)), targetCount:target, currentCount:0,
+      dailyTarget:daily, todayProgress:0, estimatedMinutes:estimated, todayFocusSeconds:0,
+      timeEntries:[], deadline:deadlineStr?new Date(deadlineStr).toISOString():null,
+      timerRunning:false, timerStart:null, deadlineNotified:false
+    });
+    saveVault(); renderTopics();
+  }
+  else if(action==='delete-goal'){ if(confirm('목표 삭제?')){ const key=getGoalKey(ti,si,gi); if(activeTimers[key]){clearInterval(activeTimers[key]); delete activeTimers[key];} data.topics[ti].sections[si].goals.splice(gi,1); saveVault(); renderTopics(); } }
+  else if(action==='inc-goal'){ const g=data.topics[ti].sections[si].goals[gi]; if(g.currentCount<g.targetCount){ g.currentCount++; g.todayProgress++; saveVault(); renderTopics(); } }
+  else if(action==='dec-goal'){ const g=data.topics[ti].sections[si].goals[gi]; if(g.currentCount>0){ g.currentCount--; g.todayProgress=Math.max(0,g.todayProgress-1); saveVault(); renderTopics(); } }
+  else if(action==='start-timer'){ startGoalTimer(ti,si,gi); }
+  else if(action==='stop-timer'){ stopGoalTimer(ti,si,gi); }
+}
+document.getElementById('add-topic-btn').addEventListener('click',()=>{ const n=prompt('주제 이름'); if(n){ data.topics.push({name:n, sections:[]}); saveVault(); renderTopics(); } });
+
+// 상세 통계 모달
+function showDetailedStats() {
+  const body=document.getElementById('stats-body'); let html='';
+  data.topics.forEach(t=>t.sections.forEach(s=>s.goals.forEach(g=>{
+    let totalSec=0;
+    if(g.timeEntries) totalSec+=g.timeEntries.reduce((s,e)=>s+(e.duration||0),0);
+    if(g.timerRunning&&g.timerStart) totalSec+=Math.floor((Date.now()-g.timerStart)/1000);
+    const timeStr=formatTimeMs(totalSec*1000);
+    const efficiency=totalSec>0?(g.currentCount/(totalSec/3600)).toFixed(1):'0';
+    const avgTime=g.currentCount>0?formatTimeMs((totalSec/g.currentCount)*1000):'N/A';
+    html+=`<div style="margin-bottom:16px; padding:12px; background:rgba(255,255,255,0.03); border-radius:14px;">
+      <strong>${esc(g.name)}</strong> <span class="badge">${g.stage}단계</span>
+      <div class="stat-bar"><div class="stat-fill" style="width:${(g.currentCount/g.targetCount)*100}%;"></div></div>
+      <div style="font-size:0.8rem;">진행: ${g.currentCount}/${g.targetCount} (${Math.round((g.currentCount/g.targetCount)*100)}%)</div>
+      <div style="font-size:0.8rem;">총 시간: ${timeStr} | 시간당 능률: ${efficiency}개</div>
+      <div style="font-size:0.8rem;">개당 평균 시간: ${avgTime}</div>
+    </div>`;
+  })));
+  if(!html) html='<p>아직 목표가 없어요 🌱</p>';
+  body.innerHTML=html;
+  document.getElementById('stats-modal').classList.remove('hidden');
+}
+function formatTimeMs(ms){ const s=Math.floor(ms/1000); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60; return `${h?h+'h ':''}${m}m ${sec}s`; }
+document.getElementById('stats-btn').addEventListener('click',showDetailedStats);
+document.getElementById('close-stats').addEventListener('click',()=>document.getElementById('stats-modal').classList.add('hidden'));
+
+// ═══════════ 클라우드 관리 ═══════════
+function getClouds(){ return data.clouds||[]; }
+function saveClouds(){ data.clouds=data.clouds||[]; saveVault(); }
+
+function initCloudUI(){
+  const select=document.getElementById('cloud-provider'), summary=document.getElementById('cloud-summary');
+  const clouds=getClouds();
+  while(select.options.length>1) select.remove(1);
+  clouds.forEach((c,i)=>{ const opt=document.createElement('option'); opt.value=i; opt.textContent=`${c.provider} (${c.username||'연결됨'})`; select.appendChild(opt); });
+  if(selectedCloudIndex>=0 && selectedCloudIndex<clouds.length){
+    select.value=selectedCloudIndex; document.getElementById('backup-btn').disabled=false; document.getElementById('restore-btn').disabled=false;
+    summary.textContent=clouds[selectedCloudIndex].provider;
+  } else { document.getElementById('backup-btn').disabled=true; document.getElementById('restore-btn').disabled=true; summary.textContent='연결 없음'; }
+}
+
+document.getElementById('connect-cloud').addEventListener('click', async ()=>{
+  const provider=document.getElementById('cloud-provider').value;
+  if(!provider) return;
+  if(provider==='webdav'){ document.getElementById('webdav-form').classList.remove('hidden'); return; }
+  if(provider==='s3'){ document.getElementById('s3-form').classList.remove('hidden'); return; }
+  const state=provider+':'+randomBytes(8).join('');
+  sessionStorage.setItem('oauth_state',state);
+  const verifier=randomBytes(32); sessionStorage.setItem('code_verifier',base64url(verifier));
+  const challengeBytes=await crypto.subtle.digest('SHA-256',verifier); const challenge=base64url(challengeBytes);
+  let authUrl;
+  if(provider==='google'){
+    authUrl=`https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=https://www.googleapis.com/auth/drive.file&access_type=offline&prompt=consent&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  } else if(provider==='dropbox'){
+    authUrl=`https://www.dropbox.com/oauth2/authorize?client_id=${DROPBOX_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  } else if(provider==='onedrive'){
+    authUrl=`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${ONEDRIVE_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=Files.ReadWrite.AppFolder offline_access&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  } else if(provider==='box'){
+    authUrl=`https://account.box.com/api/oauth2/authorize?client_id=${BOX_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  }
+  window.location.href=authUrl;
+});
+
+// WebDAV 저장
+document.getElementById('save-webdav').addEventListener('click',()=>{
+  const url=document.getElementById('webdav-url').value.trim(), user=document.getElementById('webdav-user').value.trim(), pass=document.getElementById('webdav-pass').value.trim();
+  if(!url||!user||!pass) return alert('모두 입력하세요.');
+  const clouds=getClouds();
+  clouds.push({provider:'webdav',username:user,credentials:{url,username:user,password:pass}});
+  selectedCloudIndex=clouds.length-1; saveClouds(); initCloudUI();
+  document.getElementById('webdav-form').classList.add('hidden');
+});
+
+// S3 저장
+document.getElementById('save-s3').addEventListener('click',()=>{
+  const ep=document.getElementById('s3-endpoint').value.trim(), reg=document.getElementById('s3-region').value.trim(), bkt=document.getElementById('s3-bucket').value.trim();
+  const ak=document.getElementById('s3-access-key').value.trim(), sk=document.getElementById('s3-secret-key').value.trim();
+  if(!ep||!reg||!bkt||!ak||!sk) return alert('모두 입력하세요.');
+  const clouds=getClouds();
+  clouds.push({provider:'s3',username:bkt,credentials:{endpoint:ep,region:reg,bucket:bkt,accessKey:ak,secretKey:sk}});
+  selectedCloudIndex=clouds.length-1; saveClouds(); initCloudUI();
+  document.getElementById('s3-form').classList.add('hidden');
+});
+
+document.getElementById('cloud-provider').addEventListener('change', e=>{ if(e.target.value!==''){ selectedCloudIndex=parseInt(e.target.value,10); initCloudUI(); } });
+
+// OAuth 콜백 처리
+async function handleOAuthCallback(code, state){
+  const [provider]=state.split(':');
+  const verifier=sessionStorage.getItem('code_verifier'); if(!verifier) throw new Error('세션 만료');
+  let tokenEndpoint, clientId;
+  if(provider==='google'){ tokenEndpoint='https://oauth2.googleapis.com/token'; clientId=GOOGLE_CLIENT_ID; }
+  else if(provider==='dropbox'){ tokenEndpoint='https://api.dropboxapi.com/oauth2/token'; clientId=DROPBOX_CLIENT_ID; }
+  else if(provider==='onedrive'){ tokenEndpoint='https://login.microsoftonline.com/common/oauth2/v2.0/token'; clientId=ONEDRIVE_CLIENT_ID; }
+  else if(provider==='box'){ tokenEndpoint='https://api.box.com/oauth2/token'; clientId=BOX_CLIENT_ID; }
+  const res=await fetch(tokenEndpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({client_id:clientId,code,grant_type:'authorization_code',code_verifier:verifier,redirect_uri:REDIRECT_URI})});
+  const tokens=await res.json(); sessionStorage.removeItem('code_verifier');
+  const clouds=getClouds();
+  clouds.push({provider, username:provider, credentials:{refresh_token:tokens.refresh_token, access_token:tokens.access_token, expiry:Date.now()+tokens.expires_in*1000}});
+  selectedCloudIndex=clouds.length-1; saveClouds(); initCloudUI();
+}
+
+async function getAccessToken(idx){
+  const cloud=getClouds()[idx]; if(!cloud) throw new Error('클라우드 없음');
+  if(cloud.provider==='webdav'||cloud.provider==='s3') return null;
+  if(cloud.credentials.access_token && cloud.credentials.expiry && Date.now()<cloud.credentials.expiry) return cloud.credentials.access_token;
+  let tokenEndpoint, clientId;
+  if(cloud.provider==='google'){ tokenEndpoint='https://oauth2.googleapis.com/token'; clientId=GOOGLE_CLIENT_ID; }
+  else if(cloud.provider==='dropbox'){ tokenEndpoint='https://api.dropboxapi.com/oauth2/token'; clientId=DROPBOX_CLIENT_ID; }
+  else if(cloud.provider==='onedrive'){ tokenEndpoint='https://login.microsoftonline.com/common/oauth2/v2.0/token'; clientId=ONEDRIVE_CLIENT_ID; }
+  else if(cloud.provider==='box'){ tokenEndpoint='https://api.box.com/oauth2/token'; clientId=BOX_CLIENT_ID; }
+  const res=await fetch(tokenEndpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({client_id:clientId,grant_type:'refresh_token',refresh_token:cloud.credentials.refresh_token})});
+  const data=await res.json();
+  cloud.credentials.access_token=data.access_token; cloud.credentials.expiry=Date.now()+data.expires_in*1000; saveClouds(); return data.access_token;
+}
+
+// 업로드/목록/다운로드
+async function uploadToCloud(idx, vaultBuf){
+  const cloud=getClouds()[idx];
+  if(cloud.provider==='google'){
+    const token=await getAccessToken(idx);
+    const meta={name:`todo-${new Date().toISOString()}.uooo`,parents:['appDataFolder']};
+    const form=new FormData(); form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'})); form.append('file',new Blob([vaultBuf]));
+    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form});
+  } else if(cloud.provider==='dropbox'){
+    const token=await getAccessToken(idx);
+    await fetch('https://content.dropboxapi.com/2/files/upload',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Dropbox-API-Arg':JSON.stringify({path:'/todo-backup.uooo',mode:'overwrite'}),'Content-Type':'application/octet-stream'},body:vaultBuf});
+  } else if(cloud.provider==='onedrive'){
+    const token=await getAccessToken(idx);
+    await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot:/todo-backup.uooo:/content',{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/octet-stream'},body:vaultBuf});
+  } else if(cloud.provider==='box'){
+    const token=await getAccessToken(idx);
+    const form=new FormData(); form.append('file',new Blob([vaultBuf]));
+    form.append('attributes',JSON.stringify({name:'todo-backup.uooo',parent:{id:'0'}}));
+    await fetch('https://upload.box.com/api/2.0/files/content',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:form});
+  } else if(cloud.provider==='webdav'){
+    const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password);
+    await fetch(url+'/todo-backup.uooo',{method:'PUT',headers:{'Authorization':'Basic '+auth},body:vaultBuf});
+  } else if(cloud.provider==='s3'){
+    const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials;
+    const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}/todo-backup.uooo`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3',method:'PUT',body:vaultBuf});
+    const signed=await signer.sign(); await fetch(signed.url, signed);
+  }
+}
+
+async function listCloudBackups(idx){
+  const cloud=getClouds()[idx];
+  if(cloud.provider==='google'){
+    const token=await getAccessToken(idx);
+    const res=await fetch('https://www.googleapis.com/drive/v3/files?q=name contains ".uooo"&spaces=appDataFolder&orderBy=createdTime desc&fields=files(id,name,createdTime)',{headers:{Authorization:`Bearer ${token}`}});
+    return (await res.json()).files||[];
+  } else if(cloud.provider==='dropbox'){
+    const token=await getAccessToken(idx);
+    const res=await fetch('https://api.dropboxapi.com/2/files/list_folder',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({path:''})});
+    const data=await res.json(); return (data.entries||[]).filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.path_lower,name:f.name,createdTime:f.server_modified}));
+  } else if(cloud.provider==='onedrive'){
+    const token=await getAccessToken(idx);
+    const res=await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot:/children',{headers:{Authorization:`Bearer ${token}`}});
+    const data=await res.json(); return (data.value||[]).filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.id,name:f.name,createdTime:f.lastModifiedDateTime}));
+  } else if(cloud.provider==='box'){
+    const token=await getAccessToken(idx);
+    const res=await fetch('https://api.box.com/2.0/folders/0/items?fields=id,name,modified_at',{headers:{Authorization:`Bearer ${token}`}});
+    const data=await res.json(); return data.entries.filter(f=>f.name.endsWith('.uooo')).map(f=>({id:f.id,name:f.name,createdTime:f.modified_at}));
+  } else if(cloud.provider==='webdav'){
+    const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password);
+    const res=await fetch(url,{method:'PROPFIND',headers:{'Authorization':'Basic '+auth,'Depth':'1'}});
+    const text=await res.text(); const parser=new DOMParser(); const xml=parser.parseFromString(text,'text/xml');
+    const files=[]; xml.querySelectorAll('response').forEach(r=>{ const href=r.querySelector('href')?.textContent; const name=decodeURIComponent(href.split('/').pop()); const lastmod=r.querySelector('getlastmodified')?.textContent; if(name&&name.endsWith('.uooo')) files.push({id:href,name,createdTime:lastmod}); }); return files;
+  } else if(cloud.provider==='s3'){
+    const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials;
+    const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}?list-type=2&prefix=todo-backup`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3'});
+    const signed=await signer.sign(); const res=await fetch(signed.url, signed); const xml=await res.text();
+    const parser=new DOMParser(); const doc=parser.parseFromString(xml,'text/xml'); const files=[];
+    doc.querySelectorAll('Contents').forEach(item=>{ const key=item.querySelector('Key').textContent; const lastMod=item.querySelector('LastModified').textContent; files.push({id:key,name:key,createdTime:lastMod}); }); return files;
+  }
+}
+
+async function downloadCloudBackup(idx, fileId){
+  const cloud=getClouds()[idx];
+  if(cloud.provider==='google'){ const token=await getAccessToken(idx); const res=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='dropbox'){ const token=await getAccessToken(idx); const res=await fetch('https://content.dropboxapi.com/2/files/download',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Dropbox-API-Arg':JSON.stringify({path:fileId})}}); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='onedrive'){ const token=await getAccessToken(idx); const res=await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='box'){ const token=await getAccessToken(idx); const res=await fetch(`https://api.box.com/2.0/files/${fileId}/content`,{headers:{Authorization:`Bearer ${token}`}}); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='webdav'){ const {url,username,password}=cloud.credentials; const auth=btoa(username+':'+password); const res=await fetch(url+'/'+fileId,{headers:{'Authorization':'Basic '+auth}}); return new Uint8Array(await res.arrayBuffer()); }
+  else if(cloud.provider==='s3'){ const {endpoint,region,bucket,accessKey,secretKey}=cloud.credentials; const signer=new aws4fetch.AwsV4Signer({url:`https://${endpoint}/${bucket}/${fileId}`,accessKeyId:accessKey,secretAccessKey:secretKey,region,service:'s3'}); const signed=await signer.sign(); const res=await fetch(signed.url, signed); return new Uint8Array(await res.arrayBuffer()); }
+}
+
+async function autoRestoreFromClouds(){
+  if(!data.clouds||!data.clouds.length) return;
+  for(let i=0;i<data.clouds.length;i++){ try{
+    const files=await listCloudBackups(i); if(!files.length) continue; const latest=files[0];
+    const local=localStorage.getItem(`last_backup_${i}`);
+    if(!local||new Date(latest.createdTime)>new Date(local)){
+      const vaultBytes=await downloadCloudBackup(i,latest.id);
+      await dbPut('vault',vaultBytes.buffer); const plain=await unlockVault(vaultBytes);
+      data=JSON.parse(new TextDecoder().decode(plain)); checkDailyReset(); renderTopics(); updateStats();
+      localStorage.setItem(`last_backup_${i}`,new Date().toISOString());
+      document.getElementById('app-status').textContent=`✅ ${data.clouds[i].provider}에서 복원됨`; break;
+    }
+  }catch(e){} }
+}
+
+document.getElementById('backup-btn').addEventListener('click',async()=>{
+  if(selectedCloudIndex<0) return;
+  try{ const vault=await dbGet('vault'); await uploadToCloud(selectedCloudIndex,new Uint8Array(vault)); localStorage.setItem(`last_backup_${selectedCloudIndex}`,new Date().toISOString()); document.getElementById('app-status').textContent='백업 완료'; } catch(e){ alert('실패: '+e.message); }
+});
+document.getElementById('restore-btn').addEventListener('click',async()=>{
+  if(selectedCloudIndex<0) return;
+  try{
+    const files=await listCloudBackups(selectedCloudIndex); if(!files.length){ alert('백업 없음'); return; }
+    const vaultBytes=await downloadCloudBackup(selectedCloudIndex,files[0].id);
+    await dbPut('vault',vaultBytes.buffer); const plain=await unlockVault(vaultBytes);
+    data=JSON.parse(new TextDecoder().decode(plain)); checkDailyReset(); renderTopics(); updateStats();
+    localStorage.setItem(`last_backup_${selectedCloudIndex}`,new Date().toISOString()); document.getElementById('app-status').textContent='복원 완료';
+  } catch(e){ alert('실패: '+e.message); }
+});
+
+// 알림
+setInterval(()=>{ if(Notification.permission==='granted'&&document.hidden) new Notification('🌸 uooo',{body:'오늘의 목표를 향해 한 걸음 더!',icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔮</text></svg>'}); },30*60*1000);
+
+// 잠금 해제
+async function tryUnlock(){
+  const password=pwInput.value; if(!password){alert('비밀번호를 입력하세요.'); return;}
+  let kfBytes=null;
+  if(document.getElementById('use-keyfile').checked){ const f=document.getElementById('keyfile-input').files[0]; if(!f){alert('키 파일을 선택하세요.'); return;} kfBytes=new Uint8Array(await f.arrayBuffer()); }
+  const status=document.getElementById('lock-status'); status.textContent='잠금 해제 중...';
+  try{
+    let vault=await dbGet('vault');
+    if(!vault){
+      vaultSalt=randomBytes(16); wrappingKey=await deriveWrapKey(password,kfBytes,vaultSalt);
+      data={topics:[],lastDate:new Date().toISOString().slice(0,10),clouds:[]};
+      vault=await createVault(new TextEncoder().encode(JSON.stringify(data)),vaultSalt,wrappingKey); await dbPut('vault',vault.buffer);
+    } else {
+      vaultSalt=new Uint8Array(vault).slice(0,16); wrappingKey=await deriveWrapKey(password,kfBytes,vaultSalt);
+      const plain=await unlockVault(new Uint8Array(vault)); data=JSON.parse(new TextDecoder().decode(plain)); if(!data.clouds) data.clouds=[];
+    }
+    checkDailyReset(); status.textContent=''; showApp(); autoRestoreFromClouds();
+    if(Notification.permission!=='denied') Notification.requestPermission();
+  }catch(e){ status.textContent='인증 실패'; console.error(e); }
+}
+function showApp(){ document.getElementById('lock-screen').classList.add('hidden'); document.getElementById('app-screen').classList.remove('hidden'); renderTopics(); updateStats(); initCloudUI(); }
+function lockApp(){ stopAllTimers(); data={topics:[],lastDate:'',clouds:[]}; wrappingKey=null; vaultSalt=null; document.getElementById('app-screen').classList.add('hidden'); document.getElementById('lock-screen').classList.remove('hidden'); pwInput.value=''; document.getElementById('lock-status').textContent=''; }
+async function saveVault(){ checkDailyReset(); const plain=new TextEncoder().encode(JSON.stringify(data)); const vault=await createVault(plain,vaultSalt,wrappingKey); await dbPut('vault',vault.buffer); document.getElementById('app-status').textContent='저장 완료'; updateStats(); }
+
+// 초기화
+window.addEventListener('load',async()=>{
+  const params=new URLSearchParams(window.location.search); const code=params.get('code'),state=params.get('state');
+  if(code&&state){ window.history.replaceState({},document.title,window.location.pathname); try{await handleOAuthCallback(code,state); alert('클라우드 연결 완료!');}catch(e){alert('로그인 실패: '+e.message);} }
+  document.getElementById('unlock-btn').addEventListener('click',tryUnlock);
+  document.getElementById('lock-btn').addEventListener('click',lockApp);
+});
+</script>
+</body>
+</html>
