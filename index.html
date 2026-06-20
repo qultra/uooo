@@ -279,9 +279,7 @@ async function deriveWrapKey(password, keyFileBytes, salt) {
     const hmacKey = await crypto.subtle.importKey('raw', passBits, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     const sig = await crypto.subtle.sign('HMAC', hmacKey, keyFileBytes);
     const combined = new Uint8Array(ikm.length + sig.byteLength);
-    combined.set(ikm);
-    combined.set(new Uint8Array(sig), ikm.length);
-    ikm = combined;
+    combined.set(ikm); combined.set(new Uint8Array(sig), ikm.length); ikm = combined;
   }
   const hkdfKey = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('uooo-wrap-v1') }, hkdfKey, { name: 'AES-KW', length: 256 }, false, ['wrapKey', 'unwrapKey']);
@@ -291,15 +289,14 @@ async function createVault(plaintext, salt, wrappingKey) {
   const fek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
   const wrapped = await crypto.subtle.wrapKey('raw', fek, wrappingKey, { name: 'AES-KW' });
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, fek, plaintext);
-  const wb = new Uint8Array(wrapped);
-  const lenBytes = new Uint16Array([wb.length]);
+  const wb = new Uint8Array(wrapped), lenBytes = new Uint16Array([wb.length]);
   const vault = new Uint8Array(16 + 2 + wb.length + iv.length + encrypted.byteLength);
   vault.set(salt,0); vault.set(new Uint8Array(lenBytes.buffer),16); vault.set(wb,18); vault.set(iv,18+wb.length); vault.set(new Uint8Array(encrypted),18+wb.length+iv.length);
   return vault;
 }
 async function unlockVault(vaultBytes) {
-  const salt = vaultBytes.slice(0,16); const wrappedLen = new DataView(vaultBytes.buffer).getUint16(16,true);
-  const wrappedFek = vaultBytes.slice(18,18+wrappedLen); const iv = vaultBytes.slice(18+wrappedLen,18+wrappedLen+12); const ciphertext = vaultBytes.slice(18+wrappedLen+12);
+  const salt = vaultBytes.slice(0,16), wrappedLen = new DataView(vaultBytes.buffer).getUint16(16,true);
+  const wrappedFek = vaultBytes.slice(18,18+wrappedLen), iv = vaultBytes.slice(18+wrappedLen,18+wrappedLen+12), ciphertext = vaultBytes.slice(18+wrappedLen+12);
   const fek = await crypto.subtle.unwrapKey('raw', wrappedFek, wrappingKey, { name:'AES-KW' }, { name:'AES-GCM', length:256 }, true, ['encrypt','decrypt']);
   return new Uint8Array(await crypto.subtle.decrypt({ name:'AES-GCM', iv }, fek, ciphertext));
 }
@@ -466,25 +463,16 @@ function getClouds(){ return data.clouds||[]; }
 function saveClouds(){ data.clouds=data.clouds||[]; saveVault(); }
 
 function initCloudUI() {
-  const select = document.getElementById('cloud-provider');
-  const summary = document.getElementById('cloud-summary');
+  const select = document.getElementById('cloud-provider'), summary = document.getElementById('cloud-summary');
   const clouds = getClouds();
-
   const staticOptionCount = 7; // 첫 번째 "＋연결추가..." + 6개 서비스
-
-  // 동적으로 추가되었던 연결 클라우드 옵션만 제거
-  while (select.options.length > staticOptionCount) {
-    select.remove(staticOptionCount);
-  }
-
-  // 연결된 클라우드를 드롭다운 맨 아래에 추가
+  while (select.options.length > staticOptionCount) select.remove(staticOptionCount);
   clouds.forEach((c, i) => {
     const opt = document.createElement('option');
     opt.value = 'cloud-' + i;
     opt.textContent = `${c.provider} (${c.username || '연결됨'})`;
     select.appendChild(opt);
   });
-
   if (selectedCloudIndex >= 0 && selectedCloudIndex < clouds.length) {
     select.value = 'cloud-' + selectedCloudIndex;
     document.getElementById('backup-btn').disabled = false;
@@ -529,7 +517,6 @@ document.getElementById('connect-cloud').addEventListener('click', async ()=>{
   window.location.href=authUrl;
 });
 
-// WebDAV 저장
 document.getElementById('save-webdav').addEventListener('click',()=>{
   const url=document.getElementById('webdav-url').value.trim(), user=document.getElementById('webdav-user').value.trim(), pass=document.getElementById('webdav-pass').value.trim();
   if(!url||!user||!pass) return alert('모두 입력하세요.');
@@ -539,7 +526,6 @@ document.getElementById('save-webdav').addEventListener('click',()=>{
   document.getElementById('webdav-form').classList.add('hidden');
 });
 
-// S3 저장
 document.getElementById('save-s3').addEventListener('click',()=>{
   const ep=document.getElementById('s3-endpoint').value.trim(), reg=document.getElementById('s3-region').value.trim(), bkt=document.getElementById('s3-bucket').value.trim();
   const ak=document.getElementById('s3-access-key').value.trim(), sk=document.getElementById('s3-secret-key').value.trim();
@@ -550,7 +536,7 @@ document.getElementById('save-s3').addEventListener('click',()=>{
   document.getElementById('s3-form').classList.add('hidden');
 });
 
-// OAuth 콜백 처리 (pending 방식과 동일한 토큰 저장 로직)
+// OAuth 콜백 처리 (★ refresh_token 강제 확인 및 중복 제거)
 async function handleOAuthCallback(code, state){
   const [provider]=state.split(':');
   const verifier=sessionStorage.getItem('code_verifier'); if(!verifier) throw new Error('세션 만료');
@@ -562,28 +548,42 @@ async function handleOAuthCallback(code, state){
   const res=await fetch(tokenEndpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:new URLSearchParams({client_id:clientId,code,grant_type:'authorization_code',code_verifier:verifier,redirect_uri:REDIRECT_URI})});
   const tokens=await res.json(); sessionStorage.removeItem('code_verifier');
-  const clouds=getClouds();
-  const newCreds = {
-    refresh_token: tokens.refresh_token || undefined,
-    access_token: tokens.access_token,
-    expiry: Date.now() + tokens.expires_in * 1000
-  };
-  // refresh_token이 없으면 기존 같은 provider의 refresh_token 유지
-  if (!newCreds.refresh_token) {
-    const existing = clouds.find(c => c.provider === provider);
-    if (existing && existing.credentials.refresh_token) {
-      newCreds.refresh_token = existing.credentials.refresh_token;
-    }
+
+  if (!tokens.refresh_token) {
+    alert(`${provider}에서 refresh_token을 받지 못했습니다.\nGoogle 계정 설정에서 uooo 앱 권한을 제거한 후 다시 시도하세요.`);
+    return;
   }
-  clouds.push({provider, username:provider, credentials: newCreds});
-  selectedCloudIndex=clouds.length-1; saveClouds(); initCloudUI();
+
+  const clouds=getClouds();
+  // 기존 같은 provider 제거 (refresh_token 없는 오래된 연결 정리)
+  for (let i = clouds.length-1; i >= 0; i--) {
+    if (clouds[i].provider === provider) clouds.splice(i,1);
+  }
+  clouds.push({
+    provider, username:provider,
+    credentials: {
+      refresh_token: tokens.refresh_token,
+      access_token: tokens.access_token,
+      expiry: Date.now() + tokens.expires_in * 1000
+    }
+  });
+  selectedCloudIndex = clouds.length - 1;
+  saveClouds(); initCloudUI();
+  document.getElementById('app-status').textContent = `${provider} 연결 완료!`;
 }
 
+// 토큰 갱신 (★ refresh_token 없으면 자동 제거 후 에러)
 async function getAccessToken(idx){
   const cloud=getClouds()[idx]; if(!cloud) throw new Error('클라우드 없음');
   if(cloud.provider==='webdav'||cloud.provider==='s3') return null;
   if(cloud.credentials.access_token && cloud.credentials.expiry && Date.now()<cloud.credentials.expiry) return cloud.credentials.access_token;
-  if(!cloud.credentials.refresh_token) throw new Error(`${cloud.provider}에 refresh_token이 없습니다. 다시 연결해 주세요.`);
+  if(!cloud.credentials.refresh_token) {
+    const provider = cloud.provider;
+    data.clouds.splice(idx,1);
+    selectedCloudIndex = -1;
+    saveClouds(); initCloudUI();
+    throw new Error(`${provider}에 refresh_token이 없어 연결이 제거되었습니다. 다시 연결해 주세요.`);
+  }
   let tokenEndpoint, clientId;
   if(cloud.provider==='google'){ tokenEndpoint='https://oauth2.googleapis.com/token'; clientId=GOOGLE_CLIENT_ID; }
   else if(cloud.provider==='dropbox'){ tokenEndpoint='https://api.dropboxapi.com/oauth2/token'; clientId=DROPBOX_CLIENT_ID; }
@@ -595,12 +595,11 @@ async function getAccessToken(idx){
   if(!res.ok) throw new Error(`${cloud.provider} 토큰 갱신 실패: 다시 연결해 주세요.`);
   cloud.credentials.access_token=data.access_token;
   cloud.credentials.expiry=Date.now()+data.expires_in*1000;
-  // 구글은 refresh_token을 다시 주지 않으므로 그대로 유지
   if(data.refresh_token) cloud.credentials.refresh_token=data.refresh_token;
   saveClouds(); return data.access_token;
 }
 
-// 업로드/목록/다운로드 (모든 응답 체크 강화)
+// 업로드/목록/다운로드
 async function uploadToCloud(idx, vaultBuf){
   const cloud=getClouds()[idx];
   if(cloud.provider==='google'){
@@ -702,10 +701,11 @@ async function autoRestoreFromClouds(){
   }catch(e){ console.warn(e); } }
 }
 
-// 백업/복원 버튼 이벤트
+// 백업/복원 버튼
 document.getElementById('backup-btn').addEventListener('click',async()=>{
   if(selectedCloudIndex<0) return;
-  try{ const vault=await dbGet('vault'); await uploadToCloud(selectedCloudIndex,new Uint8Array(vault)); localStorage.setItem(`last_backup_${selectedCloudIndex}`,new Date().toISOString()); document.getElementById('app-status').textContent='백업 완료'; } catch(e){ alert('실패: '+e.message); }
+  try{ const vault=await dbGet('vault'); await uploadToCloud(selectedCloudIndex,new Uint8Array(vault)); localStorage.setItem(`last_backup_${selectedCloudIndex}`,new Date().toISOString()); document.getElementById('app-status').textContent='백업 완료'; }
+  catch(e){ alert('실패: '+e.message); }
 });
 document.getElementById('restore-btn').addEventListener('click',async()=>{
   if(selectedCloudIndex<0) return;
@@ -745,7 +745,7 @@ function showApp(){ document.getElementById('lock-screen').classList.add('hidden
 function lockApp(){ stopAllTimers(); data={topics:[],lastDate:'',clouds:[]}; wrappingKey=null; vaultSalt=null; document.getElementById('app-screen').classList.add('hidden'); document.getElementById('lock-screen').classList.remove('hidden'); pwInput.value=''; document.getElementById('lock-status').textContent=''; }
 async function saveVault(){ checkDailyReset(); const plain=new TextEncoder().encode(JSON.stringify(data)); const vault=await createVault(plain,vaultSalt,wrappingKey); await dbPut('vault',vault.buffer); document.getElementById('app-status').textContent='저장 완료'; updateStats(); }
 
-// 잠금 해제 후 보류 중인 OAuth 연결 처리 (refresh_token 보존 포함)
+// 잠금 해제 후 보류 중인 OAuth 연결 처리 (refresh_token 검증 포함)
 async function processPendingOAuth() {
   const code = sessionStorage.getItem('pending_code');
   const state = sessionStorage.getItem('pending_state');
@@ -765,26 +765,30 @@ async function processPendingOAuth() {
     else if (provider === 'box') { tokenEndpoint = 'https://api.box.com/oauth2/token'; clientId = BOX_CLIENT_ID; }
 
     const res = await fetch(tokenEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ client_id: clientId, code, grant_type: 'authorization_code', code_verifier: verifier, redirect_uri: REDIRECT_URI })
     });
     const tokens = await res.json();
     sessionStorage.removeItem('code_verifier');
 
-    const clouds = getClouds();
-    const newCreds = {
-      refresh_token: tokens.refresh_token || undefined,
-      access_token: tokens.access_token,
-      expiry: Date.now() + tokens.expires_in * 1000
-    };
-    if (!newCreds.refresh_token) {
-      const existing = clouds.find(c => c.provider === provider);
-      if (existing && existing.credentials.refresh_token) {
-        newCreds.refresh_token = existing.credentials.refresh_token;
-      }
+    if (!tokens.refresh_token) {
+      alert(`${provider}에서 refresh_token을 받지 못했습니다.\nGoogle 계정 설정에서 uooo 앱 권한을 제거한 후 다시 시도하세요.`);
+      return;
     }
-    clouds.push({ provider, username: provider, credentials: newCreds });
+
+    const clouds = getClouds();
+    // 기존 동일 provider 제거
+    for (let i = clouds.length-1; i >= 0; i--) {
+      if (clouds[i].provider === provider) clouds.splice(i,1);
+    }
+    clouds.push({
+      provider, username: provider,
+      credentials: {
+        refresh_token: tokens.refresh_token,
+        access_token: tokens.access_token,
+        expiry: Date.now() + tokens.expires_in * 1000
+      }
+    });
     selectedCloudIndex = clouds.length - 1;
     saveClouds();
     initCloudUI();
